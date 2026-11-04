@@ -206,3 +206,6 @@ select.mini{width:auto;padding:6px 8px;font-size:13px}
 .hello b{color:var(--text)}
 .avatar.lg{overflow:visible}
 .avatar.lg img{border-radius:50%}
+.tx-del{border:0;background:var(--out-soft);width:34px;height:34px;border-radius:10px;font-size:15px;
+  cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;opacity:.85}
+.tx-del:active{opacity:1;transform:scale(.94)}

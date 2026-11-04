@@ -315,6 +315,8 @@ document.addEventListener('click', e => {
     if (e.target.id === 'profile-sheet' && pfMandatory) return;
     e.target.classList.add('hidden');
   }
+  const del = e.target.closest('[data-deltx]');
+  if (del) return deleteTx(del.dataset.deltx);
   const tx = e.target.closest('[data-tx]');
   if (tx) return openTxById(tx.dataset.tx);
 });
@@ -326,7 +328,8 @@ function txRow(x) {
   return `<div class="tx-item" data-tx="${x.id}">
     <div class="tx-ico ${x.type}">${esc(c.icon)}</div>
     <div class="tx-main"><div class="t">${esc(catName(c))}</div><div class="s">${esc(x.note || dayLabel(x.tx_date))}</div></div>
-    <div class="tx-amt ${x.type}">${x.type === 'income' ? '+' : '−'}${fmt(x.amount)}</div></div>`;
+    <div class="tx-amt ${x.type}">${x.type === 'income' ? '+' : '−'}${fmt(x.amount)}</div>
+    <button class="tx-del" data-deltx="${x.id}" aria-label="${esc(t('delete'))}">🗑️</button></div>`;
 }
 const txCache = new Map();
 
@@ -438,6 +441,12 @@ $('#tx-form').onsubmit = async e => {
   toast(S.editing ? t('edited') : t('saved'));
   refresh();
 };
+async function deleteTx(id) {
+  if (!confirm(t('confirmDeleteTx'))) return;
+  const { error } = await sb.from('transactions').delete().eq('id', id);
+  if (error) return fail(error);
+  txCache.delete(id); toast(t('deleted')); refresh();
+}
 $('#f-delete').onclick = async () => {
   if (!S.editing || !confirm(t('confirmDeleteTx'))) return;
   const { error } = await sb.from('transactions').delete().eq('id', S.editing.id);
