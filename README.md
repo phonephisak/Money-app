@@ -10,16 +10,19 @@ Personal income/expense tracker — mobile-first PWA.
 | File | Purpose |
 |---|---|
 | `index.html` | All screens: login, home, transactions, plan, dashboard, sheets |
-| `app.js` | App logic |
+| `app.js` | App logic (phone + password login, profile, pages) |
+| `i18n.js` | Lao / English text |
 | `config.js` | Supabase URL + publishable key (safe to be public — RLS protects data) |
 | `style.css` | Styles |
 | `sw.js`, `manifest.json`, `icon*` | PWA (install to home screen) |
 
 ## Database
-- `categories`, `transactions`, `budgets` — all with RLS `user_id = auth.uid()`
+- `profiles` (name, avatar, language), `categories`, `transactions`, `budgets` — all with RLS `user_id = auth.uid()`
 - Trigger seeds default Lao categories on sign-up
 - RPCs: `get_balance()`, `get_monthly_summary(from,to)`, `get_category_summary(from,to)`
 - Amounts are `bigint` kip (no decimals)
 
 ## Run locally
 Any static server, e.g. `npx serve .` then open http://localhost:3000
+- Storage bucket `avatars` (public read, each user writes only to `<uid>/`)
+- Phone sign-up is free (no SMS): edge function `phone-signup` creates a confirmed account with login email `<856number>@phone.money-app.la`; the app logs in with phone + password

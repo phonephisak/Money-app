@@ -1,7 +1,7 @@
 // Network-first for the app's own files, so updates show up immediately;
 // falls back to cache when offline. Supabase/API calls are never cached.
-const CACHE = 'money-v2';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icon.svg'];
+const CACHE = 'money-v3';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'i18n.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
