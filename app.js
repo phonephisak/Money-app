@@ -1,0 +1,443 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ---------- helpers ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const fmtK = n => fmt(n) + ' ₭';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseYmd = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const parseAmt = s => Number(String(s).replace(/[^\d]/g, '')) || 0;
+const MONTHS = ['ມັງກອນ', 'ກຸມພາ', 'ມີນາ', 'ເມສາ', 'ພຶດສະພາ', 'ມິຖຸນາ', 'ກໍລະກົດ', 'ສິງຫາ', 'ກັນຍາ', 'ຕຸລາ', 'ພະຈິກ', 'ທັນວາ'];
+const MONTHS_S = ['ມ.ກ', 'ກ.ພ', 'ມ.ນ', 'ມ.ສ', 'ພ.ພ', 'ມິ.ຖ', 'ກ.ລ', 'ສ.ຫ', 'ກ.ຍ', 'ຕ.ລ', 'ພ.ຈ', 'ທ.ວ'];
+const DAYS = ['ອາທິດ', 'ຈັນ', 'ອັງຄານ', 'ພຸດ', 'ພະຫັດ', 'ສຸກ', 'ເສົາ'];
+const monthLabel = d => `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+const dayLabel = s => { const d = parseYmd(s); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS_S[d.getMonth()]}`; };
+const monthRange = (offset = 0) => {
+  const n = new Date(); const a = new Date(n.getFullYear(), n.getMonth() + offset, 1);
+  const b = new Date(a.getFullYear(), a.getMonth() + 1, 0); return [a, b];
+};
+const weekRange = (offset = 0) => {
+  const n = new Date(); const dow = (n.getDay() + 6) % 7; // Monday = 0
+  const a = new Date(n.getFullYear(), n.getMonth(), n.getDate() - dow + offset * 7);
+  const b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6); return [a, b];
+};
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 2200);
+}
+function fail(e) { console.error(e); toast('❌ ' + (e?.message || 'ເກີດຂໍ້ຜິດພາດ')); }
+function bindAmount(input) {
+  input.addEventListener('input', () => {
+    const v = parseAmt(input.value); input.value = v ? fmt(v) : '';
+  });
+}
+
+/* ---------- state ---------- */
+const S = {
+  user: null, cats: [], catMap: {}, page: 'home',
+  txOffset: 0, planPeriod: 'month', planOffset: 0, dashRange: 6,
+  editing: null, budgets: [], budgetCat: null, charts: {}
+};
+
+/* ---------- auth ---------- */
+let authMode = 'login';
+$$('#auth-mode button').forEach(b => b.onclick = () => {
+  authMode = b.dataset.mode;
+  $$('#auth-mode button').forEach(x => x.classList.toggle('active', x === b));
+  $('#auth-submit').textContent = authMode === 'login' ? 'ເຂົ້າສູ່ລະບົບ' : 'ສະໝັກໃໝ່';
+  $('#auth-pass').autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
+  $('#auth-msg').textContent = '';
+});
+$('#auth-form').onsubmit = async e => {
+  e.preventDefault();
+  const email = $('#auth-email').value.trim(), password = $('#auth-pass').value;
+  const msg = $('#auth-msg'), btn = $('#auth-submit');
+  btn.disabled = true; msg.className = 'msg'; msg.textContent = 'ກຳລັງດຳເນີນການ...';
+  try {
+    if (authMode === 'login') {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    } else {
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
+      if (error) throw error;
+      if (!data.session) { msg.className = 'msg ok'; msg.textContent = '✅ ສະໝັກສຳເລັດ! ກະລຸນາກົດຢືນຢັນໃນ Email ຂອງທ່ານ ແລ້ວກັບມາເຂົ້າສູ່ລະບົບ'; }
+    }
+  } catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = /invalid login/i.test(err.message) ? 'Email ຫຼື ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ'
+      : /not confirmed/i.test(err.message) ? 'ກະລຸນາຢືນຢັນ Email ກ່ອນ'
+      : /already registered/i.test(err.message) ? 'Email ນີ້ສະໝັກແລ້ວ, ກະລຸນາເຂົ້າສູ່ລະບົບ'
+      : err.message;
+  } finally { btn.disabled = false; }
+};
+
+sb.auth.onAuthStateChange((_ev, session) => {
+  const u = session?.user || null;
+  if (u?.id === S.user?.id) return;
+  S.user = u;
+  // defer: awaiting Supabase calls inside this callback can deadlock
+  setTimeout(() => u ? startApp() : showAuth(), 0);
+});
+
+function showAuth() {
+  $('#app').classList.add('hidden'); $('#auth-view').classList.remove('hidden');
+}
+async function startApp() {
+  $('#auth-view').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#s-email').textContent = S.user.email;
+  await loadCats();
+  go(S.page);
+}
+
+/* ---------- categories ---------- */
+async function loadCats() {
+  const { data, error } = await sb.from('categories').select('*').order('type').order('sort').order('created_at');
+  if (error) return fail(error);
+  S.cats = data; S.catMap = Object.fromEntries(data.map(c => [c.id, c]));
+  const sel = $('#tx-cat'), cur = sel.value;
+  sel.innerHTML = '<option value="">ທຸກໝວດ</option>' + data.map(c => `<option value="${c.id}">${esc(c.icon)} ${esc(c.name)}</option>`).join('');
+  sel.value = cur;
+}
+const catOf = id => S.catMap[id] || { name: 'ບໍ່ມີໝວດ', icon: '❔' };
+
+/* ---------- navigation ---------- */
+const TITLES = { home: 'ໜ້າຫຼັກ', tx: 'ລາຍການເຄື່ອນໄຫວ', plan: 'ແຜນການເງິນ', dash: 'ລາຍງານ' };
+function go(page) {
+  S.page = page;
+  $$('.page').forEach(p => p.classList.toggle('hidden', p.id !== 'page-' + page));
+  $$('.tabbar [data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  $('#page-title').textContent = TITLES[page];
+  window.scrollTo(0, 0);
+  ({ home: renderHome, tx: renderTx, plan: renderPlan, dash: renderDash })[page]();
+}
+document.addEventListener('click', e => {
+  const g = e.target.closest('[data-goto],[data-page]');
+  if (g) return go(g.dataset.goto || g.dataset.page);
+  const a = e.target.closest('[data-add]');
+  if (a) return openTx(null, a.dataset.add);
+  const c = e.target.closest('[data-close]');
+  if (c) return c.closest('.sheet-bg').classList.add('hidden');
+  if (e.target.classList.contains('sheet-bg')) e.target.classList.add('hidden');
+  const t = e.target.closest('[data-tx]');
+  if (t) return openTxById(t.dataset.tx);
+});
+const refresh = () => go(S.page);
+
+/* ---------- tx rendering ---------- */
+function txRow(t) {
+  const c = catOf(t.category_id);
+  return `<div class="tx-item" data-tx="${t.id}">
+    <div class="tx-ico ${t.type}">${esc(c.icon)}</div>
+    <div class="tx-main"><div class="t">${esc(c.name)}</div><div class="s">${esc(t.note || dayLabel(t.tx_date))}</div></div>
+    <div class="tx-amt ${t.type}">${t.type === 'income' ? '+' : '−'}${fmt(t.amount)}</div></div>`;
+}
+const txCache = new Map();
+
+/* ---------- HOME ---------- */
+async function renderHome() {
+  const [a, b] = monthRange(0);
+  const [bal, mon, recent, cs, buds] = await Promise.all([
+    sb.rpc('get_balance'),
+    sb.rpc('get_monthly_summary', { p_from: ymd(a), p_to: ymd(b) }),
+    sb.from('transactions').select('*').order('tx_date', { ascending: false }).order('created_at', { ascending: false }).limit(6),
+    sb.rpc('get_category_summary', { p_from: ymd(a), p_to: ymd(b) }),
+    sb.from('budgets').select('*').eq('period', 'month')
+  ]);
+  const err = [bal, mon, recent, cs, buds].find(r => r.error); if (err) return fail(err.error);
+  const B = bal.data[0] || { income: 0, expense: 0 };
+  const total = B.income - B.expense;
+  $('#bal-total').textContent = fmtK(total);
+  const M = mon.data[0] || { income: 0, expense: 0 };
+  $('#bal-month-in').textContent = fmt(M.income);
+  $('#bal-month-out').textContent = fmt(M.expense);
+
+  recent.data.forEach(t => txCache.set(t.id, t));
+  $('#home-recent').innerHTML = recent.data.length ? recent.data.map(txRow).join('')
+    : '<div class="empty">ຍັງບໍ່ມີລາຍການ<br>ກົດ ＋ ເພື່ອບັນທຶກລາຍການທຳອິດ</div>';
+
+  const spent = Object.fromEntries(cs.data.filter(r => r.type === 'expense').map(r => [r.category_id, r.total]));
+  const list = buds.data.filter(x => S.catMap[x.category_id])
+    .map(x => ({ ...x, spent: spent[x.category_id] || 0 }))
+    .sort((p, q) => q.spent / (q.amount || 1) - p.spent / (p.amount || 1)).slice(0, 3);
+  $('#home-budget').innerHTML = list.length ? list.map(budRow).join('')
+    : '<div class="empty" style="padding:12px">ຍັງບໍ່ໄດ້ຕັ້ງງົບ — <a data-goto="plan">ຕັ້ງງົບເລີຍ</a></div>';
+}
+
+/* ---------- TRANSACTIONS ---------- */
+$('#tx-prev').onclick = () => { S.txOffset--; renderTx(); };
+$('#tx-next').onclick = () => { S.txOffset++; renderTx(); };
+['#tx-type', '#tx-cat'].forEach(s => $(s).onchange = () => renderTx());
+$('#tx-search').oninput = () => { clearTimeout(renderTx._t); renderTx._t = setTimeout(renderTx, 250); };
+
+async function renderTx() {
+  const [a, b] = monthRange(S.txOffset);
+  $('#tx-month-label').textContent = monthLabel(a);
+  let q = sb.from('transactions').select('*').gte('tx_date', ymd(a)).lte('tx_date', ymd(b))
+    .order('tx_date', { ascending: false }).order('created_at', { ascending: false }).range(0, 4999);
+  const type = $('#tx-type').value, cat = $('#tx-cat').value, s = $('#tx-search').value.trim();
+  if (type) q = q.eq('type', type);
+  if (cat) q = q.eq('category_id', cat);
+  if (s) q = q.ilike('note', `%${s.replace(/[%_]/g, '')}%`);
+  const { data, error } = await q; if (error) return fail(error);
+  let inn = 0, out = 0; const days = {};
+  data.forEach(t => {
+    txCache.set(t.id, t);
+    t.type === 'income' ? inn += t.amount : out += t.amount;
+    (days[t.tx_date] ||= []).push(t);
+  });
+  $('#tx-sum-in').textContent = fmt(inn);
+  $('#tx-sum-out').textContent = fmt(out);
+  const net = $('#tx-sum-net'); net.textContent = fmt(inn - out);
+  net.className = inn - out >= 0 ? 'c-in' : 'c-out';
+  $('#tx-list').innerHTML = data.length ? Object.entries(days).map(([d, items]) => {
+    const dn = items.reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+    return `<div class="day"><div class="day-head"><span>${dayLabel(d)}</span><span>${dn >= 0 ? '+' : '−'}${fmt(Math.abs(dn))}</span></div>${items.map(txRow).join('')}</div>`;
+  }).join('') : '<div class="empty">ບໍ່ມີລາຍການໃນເດືອນນີ້</div>';
+}
+
+/* ---------- ADD / EDIT ---------- */
+let fType = 'expense', fCat = null;
+bindAmount($('#f-amount'));
+$$('#f-type button').forEach(b => b.onclick = () => setFType(b.dataset.t));
+function setFType(t) {
+  fType = t;
+  $$('#f-type button').forEach(x => x.classList.toggle('active', x.dataset.t === t));
+  if (fCat && S.catMap[fCat]?.type !== t) fCat = null;
+  const cats = S.cats.filter(c => c.type === t);
+  if (!fCat && cats.length) fCat = cats[0].id;
+  $('#f-cats').innerHTML = cats.map(c => `<button type="button" class="chip ${c.id === fCat ? 'active' : ''}" data-cat="${c.id}">${esc(c.icon)} ${esc(c.name)}</button>`).join('');
+}
+$('#f-cats').onclick = e => {
+  const c = e.target.closest('[data-cat]'); if (!c) return;
+  fCat = c.dataset.cat;
+  $$('#f-cats .chip').forEach(x => x.classList.toggle('active', x === c));
+};
+function openTx(tx, type = 'expense') {
+  S.editing = tx;
+  $('#tx-sheet-title').textContent = tx ? 'ແກ້ໄຂລາຍການ' : 'ເພີ່ມລາຍການ';
+  fCat = tx?.category_id || null;
+  setFType(tx?.type || type);
+  $('#f-amount').value = tx ? fmt(tx.amount) : '';
+  $('#f-date').value = tx?.tx_date || ymd(new Date());
+  $('#f-note').value = tx?.note || '';
+  $('#f-delete').classList.toggle('hidden', !tx);
+  $('#tx-sheet').classList.remove('hidden');
+  if (!tx) setTimeout(() => $('#f-amount').focus(), 250);
+}
+function openTxById(id) { const t = txCache.get(id); if (t) openTx(t); }
+
+$('#tx-form').onsubmit = async e => {
+  e.preventDefault();
+  const amount = parseAmt($('#f-amount').value);
+  if (!amount) return toast('ກະລຸນາໃສ່ຈຳນວນເງິນ');
+  if (!fCat) return toast('ກະລຸນາເລືອກໝວດ');
+  const row = { type: fType, amount, category_id: fCat, tx_date: $('#f-date').value, note: $('#f-note').value.trim() || null };
+  const btn = $('#f-save'); btn.disabled = true;
+  const { error } = S.editing
+    ? await sb.from('transactions').update(row).eq('id', S.editing.id)
+    : await sb.from('transactions').insert(row);
+  btn.disabled = false;
+  if (error) return fail(error);
+  $('#tx-sheet').classList.add('hidden');
+  toast(S.editing ? '✅ ແກ້ໄຂແລ້ວ' : '✅ ບັນທຶກແລ້ວ');
+  refresh();
+};
+$('#f-delete').onclick = async () => {
+  if (!S.editing || !confirm('ລຶບລາຍການນີ້ແທ້ບໍ?')) return;
+  const { error } = await sb.from('transactions').delete().eq('id', S.editing.id);
+  if (error) return fail(error);
+  txCache.delete(S.editing.id);
+  $('#tx-sheet').classList.add('hidden'); toast('🗑️ ລຶບແລ້ວ'); refresh();
+};
+
+/* ---------- PLAN ---------- */
+$$('#plan-period button').forEach(b => b.onclick = () => {
+  S.planPeriod = b.dataset.p; S.planOffset = 0;
+  $$('#plan-period button').forEach(x => x.classList.toggle('active', x === b));
+  renderPlan();
+});
+$('#plan-prev').onclick = () => { S.planOffset--; renderPlan(); };
+$('#plan-next').onclick = () => { S.planOffset++; renderPlan(); };
+
+function budRow(x) {
+  const c = catOf(x.category_id), pct = x.amount ? x.spent / x.amount * 100 : 0;
+  const cls = pct > 100 ? 'over' : pct >= 80 ? 'warn' : '';
+  const left = x.amount - x.spent;
+  return `<div class="bud" data-bud="${x.category_id}">
+    <div class="bud-top"><span class="tx-ico expense">${esc(c.icon)}</span><span class="name">${esc(c.name)}</span>
+      <span class="nums"><b>${fmt(x.spent)}</b> / ${fmt(x.amount)}</span></div>
+    <div class="bar"><i class="${cls}" style="width:${Math.min(pct, 100)}%"></i></div>
+    <div class="bud-foot"><span>${Math.round(pct)}%</span><span class="${left < 0 ? 'c-out' : ''}">${left < 0 ? 'ເກີນງົບ ' + fmt(-left) : 'ເຫຼືອ ' + fmt(left)}</span></div></div>`;
+}
+
+async function renderPlan() {
+  const isM = S.planPeriod === 'month';
+  const [a, b] = isM ? monthRange(S.planOffset) : weekRange(S.planOffset);
+  $('#plan-label').textContent = isM ? monthLabel(a) : `${a.getDate()} ${MONTHS_S[a.getMonth()]} – ${b.getDate()} ${MONTHS_S[b.getMonth()]} ${b.getFullYear()}`;
+  const [cs, buds] = await Promise.all([
+    sb.rpc('get_category_summary', { p_from: ymd(a), p_to: ymd(b) }),
+    sb.from('budgets').select('*').eq('period', S.planPeriod)
+  ]);
+  if (cs.error) return fail(cs.error); if (buds.error) return fail(buds.error);
+  S.budgets = buds.data;
+  const spent = {}; let income = 0, spentAll = 0;
+  cs.data.forEach(r => {
+    if (r.type === 'expense') { spent[r.category_id] = r.total; spentAll += r.total; }
+    else income += r.total;
+  });
+  const bmap = Object.fromEntries(buds.data.map(x => [x.category_id, x.amount]));
+  const exp = S.cats.filter(c => c.type === 'expense');
+  const withB = exp.filter(c => bmap[c.id]).map(c => ({ category_id: c.id, amount: bmap[c.id], spent: spent[c.id] || 0 }));
+  const noB = exp.filter(c => !bmap[c.id]);
+  const total = withB.reduce((s, x) => s + x.amount, 0);
+  const used = withB.reduce((s, x) => s + x.spent, 0);
+  $('#plan-total').textContent = fmt(total);
+  $('#plan-spent').textContent = fmt(used);
+  const left = $('#plan-left'); left.textContent = fmt(total - used); left.className = total - used < 0 ? 'c-out' : 'c-in';
+  const save = income - total;
+  $('#plan-income').innerHTML = `ລາຍຮັບໃນ${isM ? 'ເດືອນ' : 'ອາທິດ'}ນີ້ <b>${fmt(income)}</b> · ລາຍຈ່າຍທັງໝົດ <b>${fmt(spentAll)}</b>` +
+    (total ? `<br>ຖ້າໃຊ້ຕາມງົບ ຈະເຫຼືອເກັບ <b class="${save < 0 ? 'c-out' : ''}">${fmt(save)}</b>` : '');
+  $('#plan-list').innerHTML = withB.map(budRow).join('') +
+    (noB.length ? `<h4>ຍັງບໍ່ໄດ້ຕັ້ງງົບ</h4>` + noB.map(c => `<div class="bud nobud" data-bud="${c.id}">
+      <div class="bud-top"><span class="tx-ico expense">${esc(c.icon)}</span><span class="name">${esc(c.name)}</span>
+      <span class="nums">ໃຊ້ໄປ <b>${fmt(spent[c.id] || 0)}</b></span></div></div>`).join('') : '');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-bud]'); if (!b) return;
+  if (S.page !== 'plan') return go('plan');
+  const c = catOf(b.dataset.bud); S.budgetCat = b.dataset.bud;
+  const cur = S.budgets.find(x => x.category_id === S.budgetCat);
+  $('#b-title').textContent = `${c.icon} ${c.name}`;
+  $('#b-sub').textContent = `ງົບປະມານ${S.planPeriod === 'month' ? 'ຕໍ່ເດືອນ' : 'ຕໍ່ອາທິດ'} (ໃຊ້ທຸກ${S.planPeriod === 'month' ? 'ເດືອນ' : 'ອາທິດ'})`;
+  $('#b-amount').value = cur ? fmt(cur.amount) : '';
+  $('#budget-sheet').classList.remove('hidden');
+  setTimeout(() => $('#b-amount').focus(), 250);
+});
+bindAmount($('#b-amount'));
+$('#budget-form').onsubmit = async e => {
+  e.preventDefault();
+  const amount = parseAmt($('#b-amount').value);
+  const { error } = amount
+    ? await sb.from('budgets').upsert({ user_id: S.user.id, category_id: S.budgetCat, period: S.planPeriod, amount }, { onConflict: 'user_id,category_id,period' })
+    : await sb.from('budgets').delete().eq('category_id', S.budgetCat).eq('period', S.planPeriod);
+  if (error) return fail(error);
+  $('#budget-sheet').classList.add('hidden'); toast('✅ ບັນທຶກງົບແລ້ວ'); renderPlan();
+};
+
+/* ---------- DASHBOARD ---------- */
+$$('#dash-range button').forEach(b => b.onclick = () => {
+  S.dashRange = +b.dataset.r;
+  $$('#dash-range button').forEach(x => x.classList.toggle('active', x === b));
+  renderDash();
+});
+$('#dash-cat-month').onchange = () => renderCatChart();
+const PALETTE = ['#0f766e', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6', '#10b981', '#ec4899', '#64748b', '#84cc16', '#06b6d4', '#f97316', '#a855f7'];
+
+async function renderDash() {
+  const n = S.dashRange;
+  const [a] = monthRange(-(n - 1)); const [, b] = monthRange(0);
+  const { data, error } = await sb.rpc('get_monthly_summary', { p_from: ymd(a), p_to: ymd(b) });
+  if (error) return fail(error);
+  const map = Object.fromEntries(data.map(r => [r.month.slice(0, 7), r]));
+  const months = [...Array(n)].map((_, i) => { const [m] = monthRange(i - n + 1); return m; });
+  const rows = months.map(m => map[ymd(m).slice(0, 7)] || { income: 0, expense: 0 });
+  const tin = rows.reduce((s, r) => s + r.income, 0), tout = rows.reduce((s, r) => s + r.expense, 0);
+  $('#k-in').textContent = fmt(tin); $('#k-out').textContent = fmt(tout);
+  const net = $('#k-net'); net.textContent = fmt(tin - tout); net.className = tin - tout < 0 ? 'c-out' : 'c-in';
+  $('#k-rate').textContent = tin ? Math.round((tin - tout) / tin * 100) + '%' : '–';
+
+  if (!window.Chart) return;
+  S.charts.m?.destroy();
+  S.charts.m = new Chart($('#ch-monthly'), {
+    type: 'bar',
+    data: {
+      labels: months.map(m => MONTHS_S[m.getMonth()]),
+      datasets: [
+        { label: 'ລາຍຮັບ', data: rows.map(r => r.income), backgroundColor: '#16a34a', borderRadius: 4 },
+        { label: 'ລາຍຈ່າຍ', data: rows.map(r => r.expense), backgroundColor: '#dc2626', borderRadius: 4 }
+      ]
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { family: 'Noto Sans Lao' } } },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.raw)}` } } },
+      scales: { y: { ticks: { callback: v => v >= 1e6 ? (v / 1e6) + 'M' : v >= 1e3 ? (v / 1e3) + 'K' : v } }, x: { grid: { display: false } } }
+    }
+  });
+
+  const sel = $('#dash-cat-month'), cur = sel.value;
+  sel.innerHTML = months.slice().reverse().map(m => `<option value="${ymd(m)}">${MONTHS_S[m.getMonth()]} ${m.getFullYear()}</option>`).join('');
+  if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
+  renderCatChart();
+}
+async function renderCatChart() {
+  const a = parseYmd($('#dash-cat-month').value), b = new Date(a.getFullYear(), a.getMonth() + 1, 0);
+  const { data, error } = await sb.rpc('get_category_summary', { p_from: ymd(a), p_to: ymd(b) });
+  if (error) return fail(error);
+  const rows = data.filter(r => r.type === 'expense').sort((p, q) => q.total - p.total);
+  const total = rows.reduce((s, r) => s + r.total, 0);
+  S.charts.c?.destroy();
+  if (!rows.length) { $('#dash-cat-table').innerHTML = '<div class="empty">ບໍ່ມີລາຍຈ່າຍໃນເດືອນນີ້</div>'; return; }
+  S.charts.c = new Chart($('#ch-cat'), {
+    type: 'doughnut',
+    data: { labels: rows.map(r => catOf(r.category_id).name), datasets: [{ data: rows.map(r => r.total), backgroundColor: rows.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 2 }] },
+    options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.label}: ${fmt(c.raw)}` } } } }
+  });
+  $('#dash-cat-table').innerHTML = rows.map((r, i) => { const c = catOf(r.category_id); return `<div class="cat-row">
+    <span class="sw" style="background:${PALETTE[i % PALETTE.length]}"></span><span class="n">${esc(c.icon)} ${esc(c.name)}</span>
+    <b>${fmt(r.total)}</b><span class="p">${Math.round(r.total / total * 100)}%</span></div>`; }).join('');
+}
+
+/* ---------- SETTINGS ---------- */
+let sType = 'expense';
+$('#btn-settings').onclick = () => { renderCatSettings(); $('#settings-sheet').classList.remove('hidden'); };
+$$('#s-cat-type button').forEach(b => b.onclick = () => {
+  sType = b.dataset.t; $$('#s-cat-type button').forEach(x => x.classList.toggle('active', x === b)); renderCatSettings();
+});
+function renderCatSettings() {
+  $('#s-cat-list').innerHTML = S.cats.filter(c => c.type === sType).map(c => `<div class="cat-row">
+    <span>${esc(c.icon)}</span><span class="n">${esc(c.name)}</span><button class="del" data-delcat="${c.id}">ລຶບ</button></div>`).join('');
+}
+$('#s-cat-list').onclick = async e => {
+  const d = e.target.closest('[data-delcat]'); if (!d) return;
+  const c = S.catMap[d.dataset.delcat];
+  if (!confirm(`ລຶບໝວດ "${c.name}"? (ລາຍການເກົ່າຈະຍັງຢູ່ ແຕ່ບໍ່ມີໝວດ)`)) return;
+  const { error } = await sb.from('categories').delete().eq('id', c.id);
+  if (error) return fail(error);
+  await loadCats(); renderCatSettings();
+};
+$('#s-cat-form').onsubmit = async e => {
+  e.preventDefault();
+  const name = $('#s-cat-name').value.trim(); if (!name) return;
+  const sort = Math.max(0, ...S.cats.filter(c => c.type === sType).map(c => c.sort)) + 1;
+  const { error } = await sb.from('categories').insert({ name, type: sType, icon: $('#s-cat-icon').value.trim() || (sType === 'income' ? '💵' : '📦'), sort });
+  if (error) return fail(error);
+  $('#s-cat-name').value = ''; $('#s-cat-icon').value = '';
+  await loadCats(); renderCatSettings(); toast('✅ ເພີ່ມໝວດແລ້ວ');
+};
+$('#s-logout').onclick = async () => { await sb.auth.signOut(); $('#settings-sheet').classList.add('hidden'); };
+$('#s-export').onclick = async () => {
+  const all = []; let from = 0;
+  for (;;) {
+    const { data, error } = await sb.from('transactions').select('*').order('tx_date').range(from, from + 999);
+    if (error) return fail(error);
+    all.push(...data); if (data.length < 1000) break; from += 1000;
+  }
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = '﻿' + ['ວັນທີ,ປະເພດ,ໝວດ,ຈຳນວນ,ໝາຍເຫດ',
+    ...all.map(t => [t.tx_date, t.type === 'income' ? 'ລາຍຮັບ' : 'ລາຍຈ່າຍ', catOf(t.category_id).name, t.amount, t.note].map(q).join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `money-${ymd(new Date())}.csv`; a.click();
+};
+
+/* ---------- boot ---------- */
+const { data: { session } } = await sb.auth.getSession();
+if (!session) showAuth();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ບໍລິຫານເງິນ">
+<title>ບໍລິຫານເງິນ</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+
+<!-- ===== LOGIN ===== -->
+<section id="auth-view" class="auth hidden">
+  <div class="auth-card">
+    <div class="auth-logo">💰</div>
+    <h1>ບໍລິຫານເງິນ</h1>
+    <p class="muted">ບັນທຶກ ຮັບ-ຈ່າຍ ແລະ ວາງແຜນການເງິນ</p>
+    <div class="seg" id="auth-mode">
+      <button data-mode="login" class="active">ເຂົ້າສູ່ລະບົບ</button>
+      <button data-mode="signup">ສະໝັກໃໝ່</button>
+    </div>
+    <form id="auth-form">
+      <label>Email<input type="email" id="auth-email" required autocomplete="email"></label>
+      <label>ລະຫັດຜ່ານ<input type="password" id="auth-pass" required minlength="6" autocomplete="current-password"></label>
+      <button type="submit" class="btn primary block" id="auth-submit">ເຂົ້າສູ່ລະບົບ</button>
+      <p id="auth-msg" class="msg"></p>
+    </form>
+  </div>
+</section>
+
+<!-- ===== APP ===== -->
+<div id="app" class="hidden">
+  <header class="topbar">
+    <h2 id="page-title">ໜ້າຫຼັກ</h2>
+    <button class="icon-btn" id="btn-settings" aria-label="ຕັ້ງຄ່າ">⚙️</button>
+  </header>
+
+  <main>
+    <!-- HOME -->
+    <section class="page" id="page-home">
+      <div class="balance-card">
+        <div class="label">ຍອດຄົງເຫຼືອທັງໝົດ</div>
+        <div class="balance" id="bal-total">0 ₭</div>
+        <div class="bal-row">
+          <div><span class="dot in"></span>ຮັບເດືອນນີ້<b id="bal-month-in">0</b></div>
+          <div><span class="dot out"></span>ຈ່າຍເດືອນນີ້<b id="bal-month-out">0</b></div>
+        </div>
+      </div>
+      <div class="quick">
+        <button class="btn in" data-add="income">＋ ຮັບເງິນ</button>
+        <button class="btn out" data-add="expense">－ ຈ່າຍເງິນ</button>
+      </div>
+      <div class="card" id="home-budget-card">
+        <div class="card-head"><h3>ງົບເດືອນນີ້</h3><a data-goto="plan">ເບິ່ງແຜນ ›</a></div>
+        <div id="home-budget"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>ລາຍການລ່າສຸດ</h3><a data-goto="tx">ທັງໝົດ ›</a></div>
+        <div id="home-recent" class="tx-list"></div>
+      </div>
+    </section>
+
+    <!-- TRANSACTIONS -->
+    <section class="page hidden" id="page-tx">
+      <div class="filters">
+        <div class="month-nav">
+          <button class="icon-btn" id="tx-prev">‹</button>
+          <span id="tx-month-label"></span>
+          <button class="icon-btn" id="tx-next">›</button>
+        </div>
+        <div class="filter-row">
+          <select id="tx-type">
+            <option value="">ທັງໝົດ</option>
+            <option value="income">ລາຍຮັບ</option>
+            <option value="expense">ລາຍຈ່າຍ</option>
+          </select>
+          <select id="tx-cat"><option value="">ທຸກໝວດ</option></select>
+        </div>
+        <input type="search" id="tx-search" placeholder="🔍 ຄົ້ນຫາໝາຍເຫດ...">
+      </div>
+      <div class="sum-strip">
+        <div>ຮັບ <b class="c-in" id="tx-sum-in">0</b></div>
+        <div>ຈ່າຍ <b class="c-out" id="tx-sum-out">0</b></div>
+        <div>ສຸດທິ <b id="tx-sum-net">0</b></div>
+      </div>
+      <div id="tx-list" class="tx-list grouped"></div>
+    </section>
+
+    <!-- PLAN -->
+    <section class="page hidden" id="page-plan">
+      <div class="seg" id="plan-period">
+        <button data-p="month" class="active">ລາຍເດືອນ</button>
+        <button data-p="week">ລາຍອາທິດ</button>
+      </div>
+      <div class="month-nav">
+        <button class="icon-btn" id="plan-prev">‹</button>
+        <span id="plan-label"></span>
+        <button class="icon-btn" id="plan-next">›</button>
+      </div>
+      <div class="plan-summary">
+        <div><span>ງົບທັງໝົດ</span><b id="plan-total">0</b></div>
+        <div><span>ໃຊ້ໄປແລ້ວ</span><b id="plan-spent" class="c-out">0</b></div>
+        <div><span>ຍັງເຫຼືອ</span><b id="plan-left">0</b></div>
+      </div>
+      <div class="plan-income" id="plan-income"></div>
+      <p class="hint">ກົດທີ່ໝວດເພື່ອຕັ້ງງົບປະມານ</p>
+      <div id="plan-list"></div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section class="page hidden" id="page-dash">
+      <div class="seg" id="dash-range">
+        <button data-r="6" class="active">6 ເດືອນ</button>
+        <button data-r="12">12 ເດືອນ</button>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><span>ລາຍຮັບ</span><b class="c-in" id="k-in">0</b></div>
+        <div class="kpi"><span>ລາຍຈ່າຍ</span><b class="c-out" id="k-out">0</b></div>
+        <div class="kpi"><span>ເງິນເກັບ</span><b id="k-net">0</b></div>
+        <div class="kpi"><span>ອັດຕາເກັບ</span><b id="k-rate">0%</b></div>
+      </div>
+      <div class="card">
+        <h3>ລາຍຮັບ vs ລາຍຈ່າຍ ລາຍເດືອນ</h3>
+        <div class="chart-box"><canvas id="ch-monthly"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>ລາຍຈ່າຍຕາມໝວດ</h3>
+          <select id="dash-cat-month" class="mini"></select></div>
+        <div class="chart-box donut"><canvas id="ch-cat"></canvas></div>
+        <div id="dash-cat-table"></div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-page="home" class="active"><span>🏠</span>ໜ້າຫຼັກ</button>
+    <button data-page="tx"><span>📋</span>ລາຍການ</button>
+    <button class="fab" data-add="expense" aria-label="ເພີ່ມ">＋</button>
+    <button data-page="plan"><span>🎯</span>ແຜນ</button>
+    <button data-page="dash"><span>📊</span>ລາຍງານ</button>
+  </nav>
+</div>
+
+<!-- ===== ADD / EDIT SHEET ===== -->
+<div class="sheet-bg hidden" id="tx-sheet">
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3 id="tx-sheet-title">ເພີ່ມລາຍການ</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <form id="tx-form">
+      <div class="seg type-seg" id="f-type">
+        <button type="button" data-t="income">ລາຍຮັບ</button>
+        <button type="button" data-t="expense" class="active">ລາຍຈ່າຍ</button>
+      </div>
+      <div class="amount-wrap">
+        <input id="f-amount" inputmode="numeric" autocomplete="off" placeholder="0" required>
+        <span>₭</span>
+      </div>
+      <div class="chips" id="f-cats"></div>
+      <label>ວັນທີ<input type="date" id="f-date" required></label>
+      <label>ໝາຍເຫດ<input type="text" id="f-note" maxlength="200" placeholder="ເຊັ່ນ: ກິນເຂົ້າທ່ຽງ"></label>
+      <div class="sheet-actions">
+        <button type="button" class="btn danger hidden" id="f-delete">ລຶບ</button>
+        <button type="submit" class="btn primary grow" id="f-save">ບັນທຶກ</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ===== BUDGET SHEET ===== -->
+<div class="sheet-bg hidden" id="budget-sheet">
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3 id="b-title">ຕັ້ງງົບ</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <form id="budget-form">
+      <p class="muted" id="b-sub"></p>
+      <div class="amount-wrap">
+        <input id="b-amount" inputmode="numeric" autocomplete="off" placeholder="0">
+        <span>₭</span>
+      </div>
+      <p class="hint">ໃສ່ 0 ເພື່ອລຶບງົບຂອງໝວດນີ້</p>
+      <button type="submit" class="btn primary block">ບັນທຶກງົບ</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===== SETTINGS SHEET ===== -->
+<div class="sheet-bg hidden" id="settings-sheet">
+  <div class="sheet tall">
+    <div class="sheet-head">
+      <h3>ຕັ້ງຄ່າ</h3>
+      <button class="icon-btn" data-close>✕</button>
+    </div>
+    <p class="muted" id="s-email"></p>
+    <h4>ໝວດໝູ່</h4>
+    <div class="seg" id="s-cat-type">
+      <button data-t="expense" class="active">ລາຍຈ່າຍ</button>
+      <button data-t="income">ລາຍຮັບ</button>
+    </div>
+    <div id="s-cat-list" class="cat-list"></div>
+    <form id="s-cat-form" class="inline-form">
+      <input id="s-cat-icon" maxlength="4" placeholder="😀" class="icon-input">
+      <input id="s-cat-name" maxlength="40" placeholder="ຊື່ໝວດໃໝ່" required>
+      <button class="btn primary">ເພີ່ມ</button>
+    </form>
+    <button class="btn block ghost" id="s-export">⬇️ ດາວໂຫຼດຂໍ້ມູນ (CSV)</button>
+    <button class="btn block danger-ghost" id="s-logout">ອອກຈາກລະບົບ</button>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
