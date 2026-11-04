@@ -93,6 +93,7 @@ function authMsg(text, kind = '') { const m = $('#auth-msg'); m.className = 'msg
 function showAuthStep(step) {
   $('#phone-form').classList.toggle('hidden', step !== 'phone');
   $('#email-form').classList.toggle('hidden', step !== 'email');
+  $('#switch-method').classList.add('hidden'); // email login removed from the UI: phone only
   authMsg('');
 }
 $('#switch-method').onclick = () => {
